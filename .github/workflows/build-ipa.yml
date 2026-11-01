@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       yggdrasil_ref:
-        description: "yggdrasil-go tag to build the framework from"
-        default: "v0.3.16"
+        description: "yggdrasil-go tag (leave empty to auto-detect)"
+        default: ""
+        required: false
 
 jobs:
   build:
@@ -39,17 +40,43 @@ jobs:
         run: |
           set -euxo pipefail
           go version
-          gomobile version || true
-          git clone --branch "${{ github.event.inputs.yggdrasil_ref }}" --depth 1 \
-            https://github.com/yggdrasil-network/yggdrasil-go /tmp/yggdrasil-go
+          git clone https://github.com/yggdrasil-network/yggdrasil-go /tmp/yggdrasil-go
           cd /tmp/yggdrasil-go
-          # old module needs newer x/sys to link with a modern Go, plus the gomobile bind package
-          go get golang.org/x/sys@latest golang.org/x/mobile/bind@latest
-          go mod tidy || true
-          # the mobile package lives in different folders depending on the version
+
+          REF="${{ github.event.inputs.yggdrasil_ref }}"
+          set +x
+          if [ -z "$REF" ]; then
+            echo "=== DEBUG: searching tags for a mobile package with the API the app uses ==="
+            for tag in $(git tag --sort=-v:refname | grep -E '^v0\.'); do
+              pkg=$(git grep -l "^package mobile" "$tag" -- '*.go' | head -n 1 || true)
+              if [ -n "$pkg" ]; then
+                tun=$(git grep -l "TakeOverTUN" "$tag" -- '*.go' | head -n 1 || true)
+                dht=$(git grep -l "GetDHTJSON" "$tag" -- '*.go' | head -n 1 || true)
+                crd=$(git grep -l "GetCoordsString" "$tag" -- '*.go' | head -n 1 || true)
+                echo "$tag  pkg=$pkg  takeOverTUN=${tun:+yes} dht=${dht:+yes} coords=${crd:+yes}"
+                if [ -n "$tun" ] && [ -n "$dht" ] && [ -n "$crd" ] && [ -z "$REF" ]; then
+                  REF="$tag"
+                fi
+              fi
+            done
+            echo "=== all tags that contain package mobile (any API) listed above ==="
+          fi
+          set -x
+          if [ -z "$REF" ]; then
+            echo "No yggdrasil-go tag has a mobile package matching this app. See the DEBUG list above."
+            git grep -n "package mobile" $(git rev-parse HEAD) -- '*.go' || true
+            git branch -a || true
+            exit 1
+          fi
+          echo "Using yggdrasil-go ref: $REF"
+          git checkout "$REF"
+
+          # old module needs newer x/sys to link with a modern Go; add gomobile's bind package
+          go get golang.org/x/sys@latest
           MOBILE_DIR=$(grep -rl --include=*.go "^package mobile" . | xargs -n1 dirname | sort -u | head -n 1)
           echo "Mobile package dir: $MOBILE_DIR"
           test -n "$MOBILE_DIR"
+          go get golang.org/x/mobile/bind@latest
           gomobile bind -target ios/arm64 -tags mobile -o Yggdrasil.xcframework \
             "github.com/yggdrasil-network/yggdrasil-go/${MOBILE_DIR#./}" \
             github.com/yggdrasil-network/yggdrasil-go/src/config

@@ -14,6 +14,15 @@ jobs:
       - name: Checkout this repo
         uses: actions/checkout@v4
 
+      - name: DEBUG - environment and repo layout
+        run: |
+          set -x
+          sw_vers
+          xcodebuild -version
+          xcodebuild -list -project "Yggdrasil Network.xcodeproj" || true
+          ls -la
+          find . -maxdepth 2 -not -path "./.git/*" | head -60
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -28,6 +37,9 @@ jobs:
 
       - name: Build Yggdrasil.framework
         run: |
+          set -euxo pipefail
+          go version
+          gomobile version || true
           git clone --branch "${{ github.event.inputs.yggdrasil_ref }}" --depth 1 \
             https://github.com/yggdrasil-network/yggdrasil-go /tmp/yggdrasil-go
           cd /tmp/yggdrasil-go
@@ -45,9 +57,11 @@ jobs:
           FW=$(find Yggdrasil.xcframework -type d -name "Yggdrasil.framework" | grep -v simulator | head -n 1)
           echo "Using: $FW"
           cp -R "$FW" "$GITHUB_WORKSPACE/Yggdrasil.framework"
+          ls -la "$GITHUB_WORKSPACE/Yggdrasil.framework"
 
       - name: Build app (unsigned)
         run: |
+          set -o pipefail
           xcodebuild \
             -project "Yggdrasil Network.xcodeproj" \
             -scheme YggdrasilNetwork \
@@ -57,7 +71,21 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build
+            build 2>&1 | tee xcodebuild.log
+
+      - name: DEBUG - show xcodebuild errors
+        if: always()
+        run: |
+          grep -n "error:" xcodebuild.log | head -40 || true
+          tail -n 60 xcodebuild.log || true
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
+          if-no-files-found: ignore
 
       - name: Package .ipa
         run: |

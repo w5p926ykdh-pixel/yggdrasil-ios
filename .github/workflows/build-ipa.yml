@@ -34,9 +34,12 @@ jobs:
           # old module needs newer x/sys to link with a modern Go, plus the gomobile bind package
           go get golang.org/x/sys@latest golang.org/x/mobile/bind@latest
           go mod tidy || true
-          ls contrib/mobile
+          # the mobile package lives in different folders depending on the version
+          MOBILE_DIR=$(grep -rl --include=*.go "^package mobile" . | xargs -n1 dirname | sort -u | head -n 1)
+          echo "Mobile package dir: $MOBILE_DIR"
+          test -n "$MOBILE_DIR"
           gomobile bind -target ios/arm64 -tags mobile -o Yggdrasil.xcframework \
-            github.com/yggdrasil-network/yggdrasil-go/contrib/mobile \
+            "github.com/yggdrasil-network/yggdrasil-go/${MOBILE_DIR#./}" \
             github.com/yggdrasil-network/yggdrasil-go/src/config
           find . -name "Yggdrasil.framework" -maxdepth 4
           FW=$(find Yggdrasil.xcframework -type d -name "Yggdrasil.framework" | grep -v simulator | head -n 1)

@@ -2,6 +2,10 @@ name: Build unsigned IPA
 
 on:
   workflow_dispatch:
+    inputs:
+      yggdrasil_ref:
+        description: "yggdrasil-go tag to build the framework from"
+        default: "v0.3.16"
 
 jobs:
   build:
@@ -24,10 +28,20 @@ jobs:
 
       - name: Build Yggdrasil.framework
         run: |
-          git clone https://github.com/yggdrasil-network/yggdrasil-go /tmp/yggdrasil-go
+          git clone --branch "${{ github.event.inputs.yggdrasil_ref }}" --depth 1 \
+            https://github.com/yggdrasil-network/yggdrasil-go /tmp/yggdrasil-go
           cd /tmp/yggdrasil-go
-          ./build -i
-          cp -R Yggdrasil.framework "$GITHUB_WORKSPACE/"
+          # old module needs newer x/sys to link with a modern Go, plus the gomobile bind package
+          go get golang.org/x/sys@latest golang.org/x/mobile/bind@latest
+          go mod tidy || true
+          ls contrib/mobile
+          gomobile bind -target ios/arm64 -tags mobile -o Yggdrasil.xcframework \
+            github.com/yggdrasil-network/yggdrasil-go/contrib/mobile \
+            github.com/yggdrasil-network/yggdrasil-go/src/config
+          find . -name "Yggdrasil.framework" -maxdepth 4
+          FW=$(find Yggdrasil.xcframework -type d -name "Yggdrasil.framework" | grep -v simulator | head -n 1)
+          echo "Using: $FW"
+          cp -R "$FW" "$GITHUB_WORKSPACE/Yggdrasil.framework"
 
       - name: Build app (unsigned)
         run: |
